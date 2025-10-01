@@ -1,0 +1,199 @@
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+import os
+import pandas as pd
+import joblib
+
+from Auto_cleaning import auto_cleaning
+from DB_server import engine
+from Predict import update_model_and_train, forcast_loop, Evaluate
+from Analysis_system.data_analyzer import size_mix_pivot, performance_table, best_sellers_by_month
+
+app = FastAPI(title="Sales Analysis & Forecast API")
+
+# -------------------------
+# CORS (allow frontend access)
+# -------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace "*" with your frontend URL
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -------------------------
+# Upload & Training Endpoint
+# -------------------------
+@app.post("/train")
+async def train_model(
+    sales_file: UploadFile = File(...),
+    product_file: UploadFile = File(None)  # optional
+):
+    os.makedirs("tmp", exist_ok=True)
+
+    # Save sales file
+    sales_path = f"tmp/{sales_file.filename}"
+    with open(sales_path, "wb") as f:
+        f.write(await sales_file.read())
+
+    # Check if product file is needed
+    try:
+        result = pd.read_sql("SELECT COUNT(*) FROM all_products", engine)
+        product_count = result.iloc[0, 0]
+    except Exception:
+        product_count = 0
+
+    product_path = None
+    if product_count == 0:
+        if product_file is None:
+            raise HTTPException(status_code=400, detail="Product file required for first-time upload")
+        product_path = f"tmp/{product_file.filename}"
+        with open(product_path, "wb") as f:
+            f.write(await product_file.read())
+    elif product_file is not None:
+        product_path = f"tmp/{product_file.filename}"
+        with open(product_path, "wb") as f:
+            f.write(await product_file.read())
+
+    # --- Auto cleaning ---
+    df_base = auto_cleaning(sales_path, product_path, engine)
+
+    # --- Train/update model ---
+    df_window, base_model, X_train, y_train, X_test, y_test, product_sku_last = update_model_and_train(df_base)
+
+    artifacts = {
+        "model": base_model,
+        "X_train": X_train,
+        "y_train": y_train,
+        "df_window": df_window,
+        "product_sku_last": product_sku_last
+    }
+    joblib.dump(artifacts, "training_artifacts.pkl")
+
+    # --- Evaluate ---
+    metrics = Evaluate(X_train, y_train, X_test, y_test, base_model)
+
+    return {
+        "status": "training completed",
+        "rows_uploaded": len(df_base),
+        "metrics": metrics
+    }
+
+# -------------------------
+# Forecast Endpoint
+# -------------------------
+@app.post("/predict")
+async def predict_sales(
+    n_forecast: int = Query(3, gt=0, description="Number of months to forecast")
+):
+    artifacts = joblib.load("training_artifacts.pkl")
+
+    X_train = artifacts["X_train"]
+    y_train = artifacts["y_train"]
+    df_window = artifacts["df_window"]
+    product_sku_last = artifacts["product_sku_last"]
+    base_model = artifacts["model"]
+
+    # Run forecast without retraining from scratch
+    long_forecast = forcast_loop(
+        X_train,
+        y_train,
+        df_window,
+        product_sku_last,
+        base_model,
+        n_forecast=n_forecast,
+        retrain_each_step=True
+    )
+    return {
+        "status": "prediction completed",
+        "forecast_rows": len(long_forecast),
+        "n_forecast": n_forecast
+    }
+
+# -------------------------------------------------------------------
+# 1) Historical Sales
+# -------------------------------------------------------------------
+@app.get("/historical")
+def get_historical(base_sku: str = Query(..., description="Base SKU")):
+    """
+    Returns historical sales for a base SKU:
+      - Chart: monthly sales quantity by size
+      - Table: detailed transaction rows
+    """
+    df = pd.read_sql("SELECT * FROM base_data", engine)
+
+    # 1) Chart data
+    pivot = size_mix_pivot(df, base_sku)
+    chart_data = {
+        "months": pivot.index.strftime("%b").tolist(),  # Jan, Feb, ...
+        "series": [
+            {"size": col, "values": pivot[col].tolist()}
+            for col in pivot.columns
+        ]
+    }
+
+    # 2) Table data
+    df_filtered = df[df["product_sku"].str.startswith(base_sku)]
+    table_data = df_filtered[["sales_date", "Size", "Total_quantity", "Total_Amount_baht"]]
+    table_data = table_data.sort_values("sales_date", ascending=False)
+
+    # Normalize keys for frontend
+    records = []
+    for _, row in table_data.iterrows():
+        records.append({
+            "date": row["sales_date"],
+            "size": row["Size"],
+            "quantity": int(row["Total_quantity"]),
+            "income": float(row["Total_Amount_baht"]),
+        })
+
+    return {
+        "chart": chart_data,
+        "table": records
+    }
+
+
+# -------------------------------------------------------------------
+# 2) Performance Comparison
+# -------------------------------------------------------------------
+@app.get("/performance")
+def get_performance(sku_list: list[str] = Query(..., description="List of SKUs or Base SKUs (max 3)")):
+    """
+    Returns comparison data for up to 3 SKUs/Base SKUs.
+    """
+    df = pd.read_sql("SELECT * FROM base_data", engine)
+
+    tbl = performance_table(df, sku_list)
+
+    scatter_data = [
+        {
+            "item": row["Item"],
+            "quantity": int(row["Quantity"]),
+        }
+        for _, row in tbl.iterrows()
+    ]
+
+    return {"scatter": scatter_data}
+
+
+# -------------------------------------------------------------------
+# 3) Best Sellers
+# -------------------------------------------------------------------
+@app.get("/best_sellers")
+def get_best_sellers(year: int = Query(...), month: int = Query(...), top_n: int = Query(10)):
+    """
+    Returns top-N best sellers in a given month.
+    """
+    df = pd.read_sql("SELECT * FROM base_data", engine)
+
+    tbl = best_sellers_by_month(df, year, month, top_n)
+
+    records = []
+    for _, row in tbl.iterrows():
+        records.append({
+            "base_sku": row["Base_SKU"],
+            "best_size": row["Best_Size"],
+            "quantity": int(row["Quantity"]),
+        })
+    
+    return {"table": records}
