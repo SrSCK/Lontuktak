@@ -211,3 +211,4 @@ def plot_validation(X_test, y_test, model_file=MODEL_FILE):
     plt.legend()
     plt.grid(True)
     plt.show()
+    

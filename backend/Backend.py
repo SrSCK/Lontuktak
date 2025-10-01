@@ -7,7 +7,7 @@ import joblib
 from Auto_cleaning import auto_cleaning
 from DB_server import engine
 from Predict import update_model_and_train, forcast_loop, Evaluate
-from Analysis_system.data_analyzer import size_mix_pivot, performance_table, best_sellers_by_month
+from analysis.data_analyzer import size_mix_pivot, performance_table, best_sellers_by_month
 
 app = FastAPI(title="Sales Analysis & Forecast API")
 
