@@ -197,3 +197,61 @@ def get_best_sellers(year: int = Query(...), month: int = Query(...), top_n: int
         })
     
     return {"table": records}
+
+@app.get("/api/notifications")
+def get_notifications():
+    # Get last 2 week_date values
+    query = """
+        SELECT DISTINCT week_date
+        FROM stock_data
+        ORDER BY week_date DESC
+        LIMIT 2
+    """
+    week_dates = pd.read_sql(query, engine)["week_date"].tolist()
+    if len(week_dates) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 weeks of data")
+
+    week_date_curr, week_date_prev = week_dates[0], week_dates[1]
+
+    # Load dataframes for both weeks
+    df_prev = pd.read_sql(f"SELECT * FROM stock_data WHERE week_date = '{week_date_prev}'", engine)
+    df_curr = pd.read_sql(f"SELECT * FROM stock_data WHERE week_date = '{week_date_curr}'", engine)
+
+    if df_curr.empty:
+        raise HTTPException(status_code=404, detail="No stock data found")
+
+    # Generate report (reusing your logic)
+    report = generate_stock_report(df_prev, df_curr)
+
+    return report.to_dict(orient="records")
+
+
+@app.get("/api/notifications/{product_name}")
+def get_notification(product_name: str):
+    query = """
+        SELECT DISTINCT week_date
+        FROM stock_data
+        ORDER BY week_date DESC
+        LIMIT 2
+    """
+    week_dates = pd.read_sql(query, engine)["week_date"].tolist()
+    if len(week_dates) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 weeks of data")
+
+    week_date_curr, week_date_prev = week_dates[0], week_dates[1]
+
+    df_prev = pd.read_sql(
+        f"SELECT * FROM stock_data WHERE week_date = '{week_date_prev}' AND product_name = '{product_name}'",
+        engine
+    )
+    df_curr = pd.read_sql(
+        f"SELECT * FROM stock_data WHERE week_date = '{week_date_curr}' AND product_name = '{product_name}'",
+        engine
+    )
+
+    if df_curr.empty:
+        raise HTTPException(status_code=404, detail=f"No data for product: {product_name}")
+
+    report = generate_stock_report(df_prev, df_curr)
+
+    return report.to_dict(orient="records")[0]
