@@ -1,8 +1,11 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
 import os
 import pandas as pd
 import joblib
+import uvicorn
 
 from Auto_cleaning import auto_cleaning
 from DB_server import engine
@@ -11,15 +14,25 @@ from analysis.data_analyzer import size_mix_pivot, performance_table, best_selle
 
 app = FastAPI(title="Sales Analysis & Forecast API")
 
-# -------------------------
-# CORS (allow frontend access)
-# -------------------------
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace "*" with your frontend URL
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Models
+class PredictionRequest(BaseModel):
+    product_id: str
+    quantity: int
+    date: str
+
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+    name: Optional[str] = None
 
 # -------------------------
 # Upload & Training Endpoint
@@ -255,3 +268,36 @@ def get_notification(product_name: str):
     report = generate_stock_report(df_prev, df_curr)
 
     return report.to_dict(orient="records")[0]
+
+# Routes
+@app.post("/predict")
+async def predict(request: PredictionRequest):
+    try:
+        # Import your prediction module
+        from Predict import predict_sales
+        result = predict_sales(request.product_id, request.quantity, request.date)
+        return {"success": True, "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/analysis/dashboard")
+async def get_analytics():
+    try:
+        from analysis.data_analyzer import get_dashboard_data
+        data = get_dashboard_data()
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/stock/levels")
+async def get_stock_levels():
+    try:
+        # Import your stock management module
+        from DB_server import get_stock_levels
+        levels = get_stock_levels()
+        return {"success": True, "data": levels}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

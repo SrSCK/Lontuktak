@@ -2,6 +2,9 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { apiClient } from '@/shared/api-client';
+import { Card } from '@/components/ui/card';
+import { toast } from '@/components/ui/use-toast';
 
 interface ForecastData {
   productSku: string;
@@ -42,6 +45,12 @@ export default function Predict() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTimeRange, setSelectedTimeRange] = useState("1 Month");
   const [otherMonths, setOtherMonths] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    product_id: '',
+    quantity: 0,
+    date: '',
+  });
   const navigate = useNavigate();
 
   const sidebarItems = [
@@ -124,6 +133,29 @@ export default function Predict() {
     const growth = ((item.predictedSales - item.currentSale) / item.currentSale) * 100;
     return sum + growth;
   }, 0);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    try {
+      const result = await apiClient.getPredictions(formData);
+      if (result.success) {
+        toast({
+          title: 'Prediction Success',
+          description: 'Your prediction has been calculated.',
+        });
+      }
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to get prediction',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#F8F5EE] flex">
@@ -496,6 +528,49 @@ export default function Predict() {
           </div>
         </div>
       )}
+
+      {/* Prediction Form - Temporary Section */}
+      <div className="container mx-auto p-4">
+        <Card className="p-6">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label>Product ID</label>
+              <Input
+                value={formData.product_id}
+                onChange={(e) => setFormData(prev => ({
+                  ...prev,
+                  product_id: e.target.value
+                }))}
+              />
+            </div>
+            <div>
+              <label>Quantity</label>
+              <Input
+                type="number"
+                value={formData.quantity}
+                onChange={(e) => setFormData(prev => ({
+                  ...prev,
+                  quantity: parseInt(e.target.value)
+                }))}
+              />
+            </div>
+            <div>
+              <label>Date</label>
+              <Input
+                type="date"
+                value={formData.date}
+                onChange={(e) => setFormData(prev => ({
+                  ...prev,
+                  date: e.target.value
+                }))}
+              />
+            </div>
+            <Button type="submit" disabled={isLoading}>
+              {isLoading ? 'Calculating...' : 'Get Prediction'}
+            </Button>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 }
