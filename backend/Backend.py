@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
 import os
 import pandas as pd
 import joblib
@@ -15,12 +16,19 @@ from analysis.data_analyzer import size_mix_pivot, performance_table, best_selle
 app = FastAPI(title="Sales Analysis & Forecast API")
 
 # Configure CORS
+origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "https://lontuktak.netlify.app"  # Add your production domain
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # Models
@@ -120,7 +128,8 @@ async def predict_sales(
     return {
         "status": "prediction completed",
         "forecast_rows": len(long_forecast),
-        "n_forecast": n_forecast
+        "n_forecast": n_forecast,
+        "forecast": long_forecast.to_dict(orient="records")
     }
 
 # -------------------------------------------------------------------
@@ -269,17 +278,6 @@ def get_notification(product_name: str):
 
     return report.to_dict(orient="records")[0]
 
-# Routes
-@app.post("/predict")
-async def predict(request: PredictionRequest):
-    try:
-        # Import your prediction module
-        from Predict import predict_sales
-        result = predict_sales(request.product_id, request.quantity, request.date)
-        return {"success": True, "data": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/analysis/dashboard")
 async def get_analytics():
     try:
@@ -299,5 +297,54 @@ async def get_stock_levels():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# Analysis endpoints
+@app.get("/analysis/historical-sales")
+async def get_historical_sales():
+    try:
+        # Read your sales data
+        sales_data = pd.read_csv('cleaned_data.csv')
+        historical = sales_data.groupby('sales_date')['total_quantity'].sum().reset_index()
+        return {
+            "data": historical.to_dict('records'),
+            "message": "Historical sales data retrieved successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/analysis/performance")
+async def get_performance_comparison():
+    try:
+        sales_data = pd.read_csv('cleaned_data.csv')
+        performance = sales_data.groupby('product_sku')['total_quantity'].sum().sort_values(ascending=False).head(10)
+        return {
+            "data": [{"sku": sku, "quantity": qty} for sku, qty in performance.items()],
+            "message": "Performance comparison retrieved successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/analysis/best-sellers")
+async def get_best_sellers():
+    try:
+        sales_data = pd.read_csv('cleaned_data.csv')
+        best_sellers = sales_data.groupby('product_name')['total_quantity'].sum().sort_values(ascending=False).head(10)
+        return {
+            "data": [{"product": prod, "quantity": qty} for prod, qty in best_sellers.items()],
+            "message": "Best sellers retrieved successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/analysis/total-income")
+async def get_total_income():
+    try:
+        sales_data = pd.read_csv('cleaned_data.csv')
+        monthly_income = sales_data.groupby(['sales_date']).agg({
+            'total_amount': 'sum'
+        }).reset_index()
+        return {
+            "data": monthly_income.to_dict('records'),
+            "message": "Total income retrieved successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

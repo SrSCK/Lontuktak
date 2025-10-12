@@ -197,8 +197,8 @@ def auto_cleaning(sales_path, product_path, engine):
         )
 
     # --- Save cleaned CSV ---
-    clean_csv_path = r"D:\test\clean_sales_data.csv"
-    df_base.to_csv(clean_csv_path, index=False, encoding="utf-8-sig")
+    #clean_csv_path = r"D:\test\clean_sales_data.csv"
+    df_base.to_csv("clean_sales_data.csv", index=False, encoding="utf-8-sig")
 
     # --- Final schema enforcement ---
     df_base = df_base[[
